@@ -14,6 +14,11 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use core::usize;
+use crate::timer::get_time_us;
+use crate::config::MAX_SYSCALL_NUM;
+use crate::mm:: {VirtAddr, MapPermission};
+
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
@@ -79,6 +84,9 @@ impl TaskManager {
         let mut inner = self.inner.exclusive_access();
         let next_task = &mut inner.tasks[0];
         next_task.task_status = TaskStatus::Running;
+        if next_task.task_start_time == 0 {
+            next_task.task_start_time = get_time_us() / 1000;
+        }
         let next_task_cx_ptr = &next_task.task_cx as *const TaskContext;
         drop(inner);
         let mut _unused = TaskContext::zero_init();
@@ -140,6 +148,9 @@ impl TaskManager {
             let mut inner = self.inner.exclusive_access();
             let current = inner.current_task;
             inner.tasks[next].task_status = TaskStatus::Running;
+            if inner.tasks[next].task_start_time == 0 {
+                inner.tasks[next].task_start_time = get_time_us() / 1000;
+            }
             inner.current_task = next;
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
             let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
@@ -152,6 +163,31 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+    fn current_task_syscall_happen(&self, i: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].task_syscall_times[i] += 1;
+    }
+    fn current_task_start_time(&self) -> usize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].task_start_time
+    }
+    fn current_task_syscall_times(&self) -> [u32; MAX_SYSCALL_NUM] {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].task_syscall_times
+    }
+    fn insert_frame(&self, start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].insert_frame(start_va, end_va, permission);
+    }
+    fn drop_frame(&self, start_va: VirtAddr, end_va: VirtAddr) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].drop_frame(start_va, end_va);
     }
 }
 
@@ -201,4 +237,27 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// Get current task's start time
+pub fn get_current_task_start_time() -> usize {
+    TASK_MANAGER.current_task_start_time()
+}
+/// Get current task's syscall times
+pub fn get_current_task_syscall_times() -> [u32; MAX_SYSCALL_NUM] {
+    TASK_MANAGER.current_task_syscall_times()
+}
+/// Inc syscall times when syscall hanppening
+pub fn inc_current_task_syscall_times(i: usize){
+    TASK_MANAGER.current_task_syscall_happen(i);
+}
+
+/// Map frame for current task
+pub fn insert_current_task_frame(start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission){
+    TASK_MANAGER.insert_frame(start_va, end_va, permission);
+}
+
+/// Unmap frame for current task
+pub fn drop_current_task_frame(start_va: VirtAddr, end_va: VirtAddr){
+    TASK_MANAGER.drop_frame(start_va, end_va);
 }

@@ -63,6 +63,26 @@ impl MemorySet {
             None,
         );
     }
+
+    /// Drop the frame area
+    pub fn drop_framed_area(
+        &mut self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+    ) {
+        let start_vpn: VirtPageNum = start_va.floor();
+        let end_vpn: VirtPageNum = end_va.ceil();
+
+        for i in 0..self.areas.len() {
+            if self.areas[i].vpn_range.get_start().0 == start_vpn.0 && self.areas[i].vpn_range.get_end().0 == end_vpn.0 {
+                info!("umap {} : {}", self.areas[i].vpn_range.get_start().0, self.areas[i].vpn_range.get_end().0);
+                self.areas[i].unmap(&mut self.page_table);
+                self.areas.drain(i..i+1);
+                break;
+            }
+        }
+    }
+
     fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {
@@ -280,12 +300,14 @@ impl MapArea {
     ) -> Self {
         let start_vpn: VirtPageNum = start_va.floor();
         let end_vpn: VirtPageNum = end_va.ceil();
+        info!("map {} : {}", start_vpn.0, end_vpn.0);
         Self {
             vpn_range: VPNRange::new(start_vpn, end_vpn),
             data_frames: BTreeMap::new(),
             map_type,
             map_perm,
         }
+        
     }
     pub fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
         let ppn: PhysPageNum;
@@ -306,7 +328,8 @@ impl MapArea {
     pub fn unmap_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
         if self.map_type == MapType::Framed {
             self.data_frames.remove(&vpn);
-        }
+        }  
+        info!("umap1 {}", vpn.0);
         page_table.unmap(vpn);
     }
     pub fn map(&mut self, page_table: &mut PageTable) {
