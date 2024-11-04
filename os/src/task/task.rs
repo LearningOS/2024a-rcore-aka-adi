@@ -1,8 +1,8 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
-use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
+use crate::config::{MAX_SYSCALL_NUM, TRAP_CONTEXT_BASE};
+use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE, MapPermission};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
@@ -68,6 +68,16 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// the task first running time(ms)
+    pub task_start_time: usize,
+    /// the task syscall times
+    pub task_syscall_times: [u32; MAX_SYSCALL_NUM],
+
+    /// stride
+    pub stride: usize,
+    /// priority
+    pub priority: usize,
 }
 
 impl TaskControlBlockInner {
@@ -84,6 +94,15 @@ impl TaskControlBlockInner {
     }
     pub fn is_zombie(&self) -> bool {
         self.get_status() == TaskStatus::Zombie
+    }
+
+    /// insert frame for this task
+    pub fn insert_frame(&mut self, start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission) {
+        self.memory_set.insert_framed_area(start_va, end_va, permission);
+    }
+    /// drop frame for this task
+    pub fn drop_frame(&mut self, start_va: VirtAddr, end_va: VirtAddr) {
+        self.memory_set.drop_framed_area(start_va, end_va);
     }
 }
 
@@ -118,6 +137,10 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    task_start_time: 0,
+                    task_syscall_times: [0; MAX_SYSCALL_NUM],
+                    stride: 0,
+                    priority: 16,
                 })
             },
         };
@@ -191,6 +214,10 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    task_start_time: 0,
+                    task_syscall_times: [0; MAX_SYSCALL_NUM],
+                    stride: 0,
+                    priority: 16,
                 })
             },
         });
@@ -202,6 +229,20 @@ impl TaskControlBlock {
         trap_cx.kernel_sp = kernel_stack_top;
         // return
         task_control_block
+        // **** release child PCB
+        // ---- release parent PCB
+    }
+
+    /// parent process spawn the child process
+    pub fn spawn(self: &Arc<Self>, data: &[u8]) -> Arc<Self> {
+        // ---- access parent PCB exclusively
+        let mut parent_inner = self.inner_exclusive_access();
+        let new_task = Arc::new(TaskControlBlock::new(
+            data
+        ));
+        // add child
+        parent_inner.children.push(new_task.clone());
+        new_task
         // **** release child PCB
         // ---- release parent PCB
     }
@@ -235,6 +276,17 @@ impl TaskControlBlock {
         } else {
             None
         }
+    }
+
+    /// insert frame for this task
+    pub fn insert_frame(&mut self, start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission) {
+        let mut inner = self.inner_exclusive_access();
+        inner.insert_frame(start_va, end_va, permission);
+    }
+    /// drop frame for this task
+    pub fn drop_frame(&mut self, start_va: VirtAddr, end_va: VirtAddr) {
+        let mut inner = self.inner_exclusive_access();
+        inner.drop_frame(start_va, end_va);
     }
 }
 

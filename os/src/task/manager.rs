@@ -1,12 +1,13 @@
 //!Implementation of [`TaskManager`]
 use super::TaskControlBlock;
+use crate::config::BIG_STRIDE;
 use crate::sync::UPSafeCell;
-use alloc::collections::VecDeque;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use lazy_static::*;
 ///A array of `TaskControlBlock` that is thread-safe
 pub struct TaskManager {
-    ready_queue: VecDeque<Arc<TaskControlBlock>>,
+    ready_vec: Vec<Arc<TaskControlBlock>>,
 }
 
 /// A simple FIFO scheduler.
@@ -14,16 +15,32 @@ impl TaskManager {
     ///Creat an empty TaskManager
     pub fn new() -> Self {
         Self {
-            ready_queue: VecDeque::new(),
+            ready_vec: Vec::new(),
         }
     }
     /// Add process back to ready queue
     pub fn add(&mut self, task: Arc<TaskControlBlock>) {
-        self.ready_queue.push_back(task);
+        self.ready_vec.push(task);
     }
     /// Take a process out of the ready queue
     pub fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
-        self.ready_queue.pop_front()
+        if self.ready_vec.len() == 0 {
+            None
+        }
+        else {
+            let mut least_stride = self.ready_vec[0].inner_exclusive_access().stride;
+            let mut index = 0;
+            for i in 1..self.ready_vec.len() {
+                if least_stride > self.ready_vec[i].inner_exclusive_access().stride {
+                    least_stride = self.ready_vec[i].inner_exclusive_access().stride;
+                    index = i;
+                }
+            }
+            let mut t = self.ready_vec[index].inner_exclusive_access();
+            t.stride += BIG_STRIDE / t.priority;
+            drop(t);
+            Some(self.ready_vec.remove(index))
+        }
     }
 }
 
