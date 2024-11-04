@@ -11,6 +11,9 @@ use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
 use lazy_static::*;
+use crate::mm::{VirtAddr, MapPermission};
+use  crate::config::MAX_SYSCALL_NUM;
+use crate::timer::get_time_us;
 
 /// Processor management structure
 pub struct Processor {
@@ -33,6 +36,24 @@ impl Processor {
     ///Get mutable reference to `idle_task_cx`
     fn get_idle_task_cx_ptr(&mut self) -> *mut TaskContext {
         &mut self.idle_task_cx as *mut _
+    }
+    fn current_task_syscall_happen(&self, i: usize) {
+        self.current().unwrap().inner_exclusive_access().task_syscall_times[i] += 1;
+    }
+    fn current_task_start_time(&self) -> usize {
+        self.current().unwrap().inner_exclusive_access().task_start_time
+    }
+    fn current_task_syscall_times(&self) -> [u32; MAX_SYSCALL_NUM] {
+        self.current().unwrap().inner_exclusive_access().task_syscall_times
+    }
+    fn insert_frame(&self, start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission) {
+        self.current().unwrap().inner_exclusive_access().insert_frame(start_va, end_va, permission);
+    }
+    fn drop_frame(&self, start_va: VirtAddr, end_va: VirtAddr) {
+        self.current().unwrap().inner_exclusive_access().drop_frame(start_va, end_va);
+    }
+    fn current_task_set_priority(&self, prio: isize) {
+        self.current().unwrap().inner_exclusive_access().priority = prio as usize;
     }
 
     ///Get current task in moving semanteme
@@ -61,6 +82,9 @@ pub fn run_tasks() {
             let mut task_inner = task.inner_exclusive_access();
             let next_task_cx_ptr = &task_inner.task_cx as *const TaskContext;
             task_inner.task_status = TaskStatus::Running;
+            if task_inner.task_start_time == 0 {
+                task_inner.task_start_time = get_time_us() / 1000;
+            }
             // release coming task_inner manually
             drop(task_inner);
             // release coming task TCB manually
@@ -108,4 +132,29 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
     unsafe {
         __switch(switched_task_cx_ptr, idle_task_cx_ptr);
     }
+}
+
+/// Get current task's start time
+pub fn get_current_task_start_time() -> usize {
+    PROCESSOR.exclusive_access().current_task_start_time()
+}
+/// Get current task's syscall times
+pub fn get_current_task_syscall_times() -> [u32; MAX_SYSCALL_NUM] {
+    PROCESSOR.exclusive_access().current_task_syscall_times()
+}
+/// Inc syscall times when syscall hanppening
+pub fn inc_current_task_syscall_times(i: usize){
+    PROCESSOR.exclusive_access().current_task_syscall_happen(i);
+}
+/// Map frame for current task
+pub fn insert_current_task_frame(start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission) {
+    PROCESSOR.exclusive_access().insert_frame(start_va, end_va, permission);
+}
+/// Unmap frame for current task
+pub fn drop_current_task_frame(start_va: VirtAddr, end_va: VirtAddr) {
+    PROCESSOR.exclusive_access().drop_frame(start_va, end_va);
+}
+/// Set priority for current task
+pub fn set_current_task_priority(prio: isize) {
+    PROCESSOR.exclusive_access().current_task_set_priority(prio);
 }
