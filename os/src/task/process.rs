@@ -45,10 +45,24 @@ pub struct ProcessControlBlockInner {
     pub task_res_allocator: RecycleAllocator,
     /// mutex list
     pub mutex_list: Vec<Option<Arc<dyn Mutex>>>,
+    /// available mutex list
+    pub avail_mutex_list: Vec<u32>,
+    /// allocation
+    pub alloc_mutex_arr: Vec<Vec<u32>>,
+    /// need
+    pub need_mutex_arr: Vec<Vec<u32>>,
     /// semaphore list
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
+    /// allocation
+    pub alloc_sem_arr: Vec<Vec<u32>>,
+    /// available semaphore list
+    pub avail_sem_list: Vec<u32>,
+    /// need
+    pub need_sem_arr: Vec<Vec<u32>>,
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+    /// deadlock detect
+    pub deadlock_detect: bool,
 }
 
 impl ProcessControlBlockInner {
@@ -81,6 +95,41 @@ impl ProcessControlBlockInner {
     /// get a task with tid in this process
     pub fn get_task(&self, tid: usize) -> Arc<TaskControlBlock> {
         self.tasks[tid].as_ref().unwrap().clone()
+    }
+    pub fn bankers_algorithm(&self, ava: &Vec<u32>, alloc: &Vec<Vec<u32>>, need: &Vec<Vec<u32>>) -> bool {
+
+        if !self.deadlock_detect {
+            return true;
+        }
+
+        let num_threads = self.tasks.len();
+        let num_resources = ava.len();
+
+        let mut work = ava.clone();
+
+        let mut finish = vec![false; num_threads];
+
+        loop {
+            let mut found = false;
+    
+            for i in 0..num_threads {
+
+                if !finish[i] && (0..num_resources).all(|j| need[i][j] <= work[j]) {
+
+                    for j in 0..num_resources {
+                        work[j] += alloc[i][j];
+                    }
+                    finish[i] = true;
+                    found = true;
+                }
+            }
+
+            if !found {
+                break;
+            }
+        }
+
+        !finish.iter().any(|&f| !f)
     }
 }
 
@@ -117,8 +166,15 @@ impl ProcessControlBlock {
                     tasks: Vec::new(),
                     task_res_allocator: RecycleAllocator::new(),
                     mutex_list: Vec::new(),
+                    avail_mutex_list: vec![0; 50],
+                    alloc_mutex_arr: vec![vec![0; 50]; 50],
+                    need_mutex_arr: vec![vec![0; 50]; 50],
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    alloc_sem_arr: vec![vec![0; 50]; 50],
+                    need_sem_arr: vec![vec![0; 50]; 50],
+                    avail_sem_list: vec![0; 50],
+                    deadlock_detect: false,
                 })
             },
         });
@@ -243,8 +299,15 @@ impl ProcessControlBlock {
                     tasks: Vec::new(),
                     task_res_allocator: RecycleAllocator::new(),
                     mutex_list: Vec::new(),
+                    avail_mutex_list: vec![0; 50],
+                    alloc_mutex_arr: vec![vec![0; 50]; 50],
+                    need_mutex_arr: vec![vec![0; 50]; 50],
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    alloc_sem_arr: vec![vec![0; 50]; 50],
+                    need_sem_arr: vec![vec![0; 50]; 50],
+                    avail_sem_list: vec![0; 50],
+                    deadlock_detect: false,
                 })
             },
         });
